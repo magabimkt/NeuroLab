@@ -5061,11 +5061,28 @@ let _fbSyncTimer = null;
 async function initFirebase(){
   try {
     const {initializeApp,getApps} = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js');
-    const {getDatabase,ref,set,onValue} = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js');
+    const {getDatabase,ref,set,onValue,enableNetwork,disableNetwork} = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js');
     const app = getApps().length ? getApps()[0] : initializeApp(FB_CONFIG);
     _fbDb = getDatabase(app);
+
+    // Persistência offline: Firebase enfileira writes e sincroniza ao reconectar
+    try {
+      const {initializeApp:_a} = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js');
+      // goOffline/goOnline monitorados via navigator.onLine
+      window.addEventListener('online', ()=>{
+        enableNetwork(_fbDb).catch(()=>{});
+        showSyncBadge('🔄 Reconectado — sincronizando...');
+        setTimeout(()=>pushToFirebase(), 500);
+      });
+      window.addEventListener('offline', ()=>{
+        disableNetwork(_fbDb).catch(()=>{});
+        showSyncBadge('📴 Offline — salvando localmente');
+      });
+    } catch(e){}
+
     const uid = getUUID();
     _fbRef = {progress: ref(_fbDb,`users/${uid}/progress`), seen: ref(_fbDb,`users/${uid}/seen`)};
+
     // Carrega do Firebase ao iniciar (substitui localStorage se mais recente)
     onValue(_fbRef.progress, snap=>{
       const remote = snap.val();
@@ -5081,14 +5098,18 @@ async function initFirebase(){
       if(remote && Object.keys(remote).length > Object.keys(seenCards).length){
         seenCards = remote;
         try{localStorage.setItem('neurolab_seen',JSON.stringify(seenCards));}catch(e){}
-        // restaura visuais dos cards já vistos
         Object.keys(seenCards).forEach(id=>{
           const btn = document.querySelector(`[onclick*="${id}"]`);
           if(btn){btn.textContent='Compreendido';btn.classList.add('done');btn.disabled=true;}
         });
       }
     },{onlyOnce:true});
-    showSyncBadge('☁️ Sincronizado');
+
+    if(!navigator.onLine){
+      showSyncBadge('📴 Offline — usando dados locais');
+    } else {
+      showSyncBadge('☁️ Sincronizado');
+    }
   } catch(e){
     console.warn('Firebase indisponível, usando somente localStorage',e);
   }
@@ -5652,6 +5673,10 @@ function resetProgress(){
   renderHome();
   updateStats();
   initFirebase();
+  // Registra Service Worker para cache offline
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  }
 })();
 </script>
 </body>
